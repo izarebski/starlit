@@ -1,11 +1,48 @@
-body, html {
-    margin: 0;
-    padding: 0;
-    height: 100%;
-    width: 100%;
+.modal {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: white;
+    padding: 25px;
+    border-radius: 12px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    z-index: 2000;
+    max-height: 70vh;
+    overflow-y: auto;
+    min-width: 320px;
+    font-family: sans-serif;
 }
 
-.leaflet-container {
-    width: 100vw;
-    height: 100vh;
+.modal-content h3 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    padding-right: 30px;
+}
+
+.modal-content ul {
+    list-style-type: none;
+    padding: 0;
+}
+
+.modal-content li {
+    padding: 8px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.close-btn {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    background: #ff4444;
+    color: white;
+    border: none;
+    cursor: pointer;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-weight: bold;
+}
+
+.close-btn:hover {
+    background: #cc0000;
 }
