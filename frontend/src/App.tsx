@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents, Circle } from 'react-leaflet';
+import React, { useEffect, useState, useRef } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents, Circle, useMap } from 'react-leaflet';
+import toast, { Toaster } from 'react-hot-toast';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import './App.css';
@@ -90,6 +91,26 @@ function LocationMarker({ position, setPosition }: { position: L.LatLng, setPosi
     );
 }
 
+function MapUpdater({ center }: { center: [number, number] | null }) {
+    const map = useMap();
+    
+    useEffect(() => {
+        const timeoutId = setTimeout(() => {
+            map.invalidateSize();
+        }, 200);
+        
+        return () => clearTimeout(timeoutId);
+    }, [map]);
+    
+    useEffect(() => {
+        if (center) {
+            map.flyTo(center, 7, { animate: true, duration: 1.5 });
+        }
+    }, [center, map]);
+    
+    return null;
+}
+
 function App() {
     const [satellites, setSatellites] = useState<Satellite[]>([]);
     const [group, setGroup] = useState<string>('stations');
@@ -103,42 +124,48 @@ function App() {
     const [observerPos, setObserverPos] = useState<L.LatLng>(new L.LatLng(53.885, 17.722));
     const [showFootprint, setShowFootprint] = useState(false);
 
+    const [searchQuery, setSearchQuery] = useState("");
+    const [targetCenter, setTargetCenter] = useState<[number, number] | null>(null);
+
+    const notificationTimers = useRef<Record<string, NodeJS.Timeout>>({});
+
     useEffect(() => {
-        const fetchSatellites = async () => {
-            try {
-                const response = await fetch(`http://127.0.0.1:8000/api/satellite-group?group=${group}`);
-                const data = await response.json();
-                
-                setSatellites(data.satellites);
+        const ws = new WebSocket(`ws://127.0.0.1:8000/api/ws/satellite-group?group=${group}`);
 
-                setTrails(prevTrails => {
-                    const newTrails = { ...prevTrails };
-                    data.satellites.forEach((sat: Satellite) => {
-                        const currentTrail = prevTrails[sat.norad_id] || [];
-                        const updatedTrail = [...currentTrail, [sat.lat, sat.lon] as [number, number]];
-                        
-                        if (updatedTrail.length > 200) {
-                            updatedTrail.shift();
-                        }
-                        
-                        newTrails[sat.norad_id] = updatedTrail;
-                    });
-                    return newTrails;
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            setSatellites(data.satellites);
+
+            setTrails(prevTrails => {
+                const newTrails = { ...prevTrails };
+                data.satellites.forEach((sat: Satellite) => {
+                    const currentTrail = prevTrails[sat.norad_id] || [];
+                    const updatedTrail = [...currentTrail, [sat.lat, sat.lon] as [number, number]];
+                    
+                    if (updatedTrail.length > 200) {
+                        updatedTrail.shift();
+                    }
+                    
+                    newTrails[sat.norad_id] = updatedTrail;
                 });
-
-            } catch (error) {
-                console.error(error);
-            }
+                return newTrails;
+            });
         };
 
-        fetchSatellites();
-        const intervalId = setInterval(fetchSatellites, 3000);
+        ws.onerror = (error) => {
+            console.error(error);
+        };
 
-        return () => clearInterval(intervalId);
+        return () => {
+            ws.close();
+            Object.values(notificationTimers.current).forEach(clearTimeout);
+            notificationTimers.current = {};
+        };
     }, [group]);
 
     useEffect(() => {
         setTrails({});
+        setSearchQuery("");
     }, [group]);
 
     const checkPasses = async (satName: string) => {
@@ -159,35 +186,94 @@ function App() {
         }
     };
 
+    const setAlert = (satName: string, passTimeISO: string) => {
+        const passTimeMs = new Date(passTimeISO).getTime();
+        const nowMs = new Date().getTime();
+        const timeToPass = passTimeMs - nowMs;
+        const notifyTime = timeToPass - (5 * 60 * 1000);
+
+        if (notifyTime > 0) {
+            if (notificationTimers.current[satName]) {
+                clearTimeout(notificationTimers.current[satName]);
+            }
+
+            notificationTimers.current[satName] = setTimeout(() => {
+                toast(`Obiekt ${satName} pojawi się na horyzoncie za 5 minut!`, {
+                    icon: '🛰️',
+                    duration: 8000,
+                });
+                delete notificationTimers.current[satName];
+            }, notifyTime);
+            
+            toast.success(`Ustawiono alarm! Powiadomimy Cię 5 min przed przelotem.`, {
+                duration: 4000
+            });
+        } else {
+            toast.error("Ten przelot jest zbyt blisko lub już minął.", {
+                duration: 4000
+            });
+        }
+    };
+
+    const filteredSatellites = satellites.filter(sat => 
+        sat.satellite_name.toLowerCase().includes(searchQuery.toLowerCase())
+    ).slice(0, 50);
+
+    const focusOnSatellite = (lat: number, lon: number) => {
+        setTargetCenter([lat, lon]);
+    };
+
     return (
-        <div>
-            <div className="controls">
-                <label htmlFor="group-select">Konstelacja: </label>
-                <select 
-                    id="group-select" 
-                    value={group} 
-                    onChange={(e) => setGroup(e.target.value)}
-                >
-                    <option value="stations">Stacje kosmiczne</option>
-                    <option value="starlink">Starlink</option>
-                    <option value="gps-ops">Nawigacja GPS</option>
-                    <option value="weather">Satelity pogodowe</option>
-                </select>
-                
-                <div style={{ marginTop: '15px' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+        <div className="app-container">
+            <Toaster position="top-right" />
+            <div className="sidebar">
+                <div className="sidebar-header">
+                    <h2>Satelity</h2>
+                    <select 
+                        value={group} 
+                        onChange={(e) => setGroup(e.target.value)}
+                        className="group-select-sidebar"
+                    >
+                        <option value="stations">Stacje kosmiczne</option>
+                        <option value="starlink">Starlink</option>
+                        <option value="gps-ops">Nawigacja GPS</option>
+                        <option value="weather">Satelity pogodowe</option>
+                    </select>
+
+                    <label className="checkbox-label">
                         <input 
                             type="checkbox" 
                             checked={showFootprint} 
                             onChange={(e) => setShowFootprint(e.target.checked)} 
-                            style={{ marginRight: '8px' }}
                         />
                         Pokaż zasięg widoczności
                     </label>
-                </div>
+                    <div className="observer-hint">
+                        Kliknij na mapę, aby zmienić miejsce obserwacji.
+                    </div>
 
-                <div style={{ marginTop: '10px', fontSize: '0.85em', color: '#555' }}>
-                    Kliknij na mapę, aby zmienić miejsce obserwacji.
+                    <input 
+                        type="text" 
+                        placeholder="Szukaj satelity..." 
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="search-input"
+                    />
+                </div>
+                <div className="sidebar-list">
+                    {filteredSatellites.map(sat => (
+                        <div 
+                            key={sat.norad_id} 
+                            className="sidebar-item"
+                            onClick={() => focusOnSatellite(sat.lat, sat.lon)}
+                        >
+                            <span className="sat-name">{sat.satellite_name}</span>
+                            <span className="sat-alt">{(sat.elevation / 1000).toFixed(0)} km</span>
+                        </div>
+                    ))}
+                    {filteredSatellites.length === 0 && (
+                        <div className="no-results">Brak wyników</div>
+                    )}
                 </div>
             </div>
 
@@ -201,9 +287,21 @@ function App() {
                         ) : (
                             <ul>
                                 {passes.map((p, index) => (
-                                    <li key={index}>
-                                        <b>{p.event.toUpperCase()}</b>: {new Date(p.time).toLocaleTimeString()} 
-                                        (Az: {p.azimuth}°, El: {p.elevation}°)
+                                    <li key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span>
+                                            <b>{p.event.toUpperCase()}</b>: {new Date(p.time).toLocaleTimeString()} 
+                                            <span style={{ fontSize: '0.85em', color: '#666', marginLeft: '5px' }}>
+                                                (Az: {p.azimuth}°, El: {p.elevation}°)
+                                            </span>
+                                        </span>
+                                        {p.event === 'rise' && (
+                                            <button 
+                                                onClick={() => setAlert(selectedSatName, p.time)}
+                                                style={{ marginLeft: '10px', padding: '4px 8px', cursor: 'pointer' }}
+                                            >
+                                                Ustaw alarm
+                                            </button>
+                                        )}
                                     </li>
                                 ))}
                             </ul>
@@ -212,54 +310,57 @@ function App() {
                 </div>
             )}
 
-            <MapContainer center={[53.885, 17.722]} zoom={6} style={{ height: "100vh", width: "100vw" }}>
-                <TileLayer
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                />
-                
-                <LocationMarker position={observerPos} setPosition={setObserverPos} />
+            <div className="map-wrapper">
+                <MapContainer center={[53.885, 17.722]} zoom={5} style={{ height: "100%", width: "100%" }}>
+                    <TileLayer
+                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    />
+                    
+                    <LocationMarker position={observerPos} setPosition={setObserverPos} />
+                    <MapUpdater center={targetCenter} />
 
-                {satellites.map((sat) => {
-                    const R = 6371000;
-                    const theta = Math.acos(R / (R + sat.elevation));
-                    const footprintRadius = R * theta;
+                    {satellites.map((sat) => {
+                        const R = 6371000;
+                        const theta = Math.acos(R / (R + sat.elevation));
+                        const footprintRadius = R * theta;
 
-                    return (
-                        <React.Fragment key={sat.norad_id}>
-                            {showFootprint && (
-                                <Circle 
-                                    center={[sat.lat, sat.lon]} 
-                                    radius={footprintRadius} 
-                                    pathOptions={{ color: '#4a90e2', fillColor: '#4a90e2', fillOpacity: 0.1, weight: 1 }} 
-                                />
-                            )}
+                        return (
+                            <React.Fragment key={sat.norad_id}>
+                                {showFootprint && (
+                                    <Circle 
+                                        center={[sat.lat, sat.lon]} 
+                                        radius={footprintRadius} 
+                                        pathOptions={{ color: '#4a90e2', fillColor: '#4a90e2', fillOpacity: 0.1, weight: 1 }} 
+                                    />
+                                )}
 
-                            <Marker 
-                                position={[sat.lat, sat.lon]} 
-                                icon={getCustomIcon(group)}
-                            >
-                                <Popup>
-                                    <b>{sat.satellite_name}</b><br />
-                                    Wysokość: {(sat.elevation / 1000).toFixed(1)} km<br /><br />
-                                    <button onClick={() => checkPasses(sat.satellite_name)}>
-                                    Sprawdź widoczność
-                                    </button>
-                                </Popup>
-                            </Marker>
-                            
-                            {trails[sat.norad_id] && trails[sat.norad_id].length > 1 && (
-                                <Polyline 
-                                    positions={trails[sat.norad_id]} 
-                                    color="red" 
-                                    weight={3} 
-                                    opacity={0.6} 
-                                />
-                            )}
-                        </React.Fragment>
-                    );
-                })}
-            </MapContainer>
+                                <Marker 
+                                    position={[sat.lat, sat.lon]} 
+                                    icon={getCustomIcon(group)}
+                                >
+                                    <Popup>
+                                        <b>{sat.satellite_name}</b><br />
+                                        Wysokość: {(sat.elevation / 1000).toFixed(1)} km<br /><br />
+                                        <button onClick={() => checkPasses(sat.satellite_name)}>
+                                        Sprawdź widoczność
+                                        </button>
+                                    </Popup>
+                                </Marker>
+                                
+                                {trails[sat.norad_id] && trails[sat.norad_id].length > 1 && (
+                                    <Polyline 
+                                        positions={trails[sat.norad_id]} 
+                                        color="red" 
+                                        weight={3} 
+                                        opacity={0.6} 
+                                    />
+                                )}
+                            </React.Fragment>
+                        );
+                    })}
+                </MapContainer>
+            </div>
         </div>
     );
 }
