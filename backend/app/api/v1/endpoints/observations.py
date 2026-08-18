@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 import asyncio
+import traceback
 from app.services.orbit_calculator import satellite_coords, group_coords
 from app.services.pass_calculator import satellite_passes
 
@@ -27,6 +28,10 @@ def get_satellite_passes_endpoint(group: str, name: str, lat: float, lon: float,
         result = satellite_passes(group_name=group, sat_name=name, lat=lat, lon=lon, days_ahead=days)
         return result
     except Exception as e:
+        # Poniższe linie wymuszą wypisanie pełnego, czerwonego błędu w Twoim terminalu
+        print("\n--- BŁĄD OBLICZANIA PRZELOTÓW ---")
+        traceback.print_exc()
+        print("---------------------------------\n")
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.websocket("/ws/satellite-group")
@@ -41,3 +46,6 @@ async def websocket_satellite_group(websocket: WebSocket, group: str):
             await asyncio.sleep(1)
     except WebSocketDisconnect:
         pass
+    except Exception as e:
+        print(f"Błąd WebSocket: {e}")
+        await websocket.close()
