@@ -68,6 +68,8 @@ interface Satellite {
     lat: number;
     lon: number;
     elevation: number;
+    velocity: number;
+    inclination: number;
 }
 
 interface PassEvent {
@@ -116,7 +118,15 @@ function App() {
     const [group, setGroup] = useState<string>('stations');
     const [trails, setTrails] = useState<Record<number, [number, number][]>>({});
     
+    const [favorites, setFavorites] = useState<number[]>(() => {
+        const saved = localStorage.getItem('satellite_favorites');
+        return saved ? JSON.parse(saved) : [];
+    });
+    
+    const [showOnlyFavorites, setShowOnlyFavorites] = useState<boolean>(false);
+
     const [passes, setPasses] = useState<PassEvent[]>([]);
+    const [predictedPath, setPredictedPath] = useState<[number, number][]>([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [loadingPasses, setLoadingPasses] = useState(false);
     const [selectedSatName, setSelectedSatName] = useState("");
@@ -128,6 +138,16 @@ function App() {
     const [targetCenter, setTargetCenter] = useState<[number, number] | null>(null);
 
     const notificationTimers = useRef<Record<string, NodeJS.Timeout>>({});
+
+    useEffect(() => {
+        if ("Notification" in window && Notification.permission === "default") {
+            Notification.requestPermission();
+        }
+    }, []);
+
+    useEffect(() => {
+        localStorage.setItem('satellite_favorites', JSON.stringify(favorites));
+    }, [favorites]);
 
     useEffect(() => {
         const ws = new WebSocket(`ws://127.0.0.1:8000/api/ws/satellite-group?group=${group}`);
@@ -168,22 +188,69 @@ function App() {
         setSearchQuery("");
     }, [group]);
 
+    const toggleFavorite = (noradId: number, e: React.MouseEvent) => {
+        e.stopPropagation();
+        setFavorites(prev => {
+            if (prev.includes(noradId)) {
+                toast.success("Usunięto z ulubionych");
+                return prev.filter(id => id !== noradId);
+            } else {
+                toast.success("Dodano do ulubionych ⭐");
+                return [...prev, noradId];
+            }
+        });
+    };
+
+    const locateUser = () => {
+        if ("geolocation" in navigator) {
+            toast.loading("Szukanie Twojej lokalizacji...", { id: "geo-toast" });
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    const newPos = new L.LatLng(position.coords.latitude, position.coords.longitude);
+                    setObserverPos(newPos);
+                    setTargetCenter([newPos.lat, newPos.lng]);
+                    toast.success("Znaleziono!", { id: "geo-toast" });
+                },
+                () => {
+                    toast.error("Nie udało się pobrać lokalizacji.", { id: "geo-toast" });
+                }
+            );
+        } else {
+            toast.error("Twoja przeglądarka nie obsługuje geolokalizacji.");
+        }
+    };
+
     const checkPasses = async (satName: string) => {
         setSelectedSatName(satName);
         setIsModalOpen(true);
         setLoadingPasses(true);
         setPasses([]);
+        setPredictedPath([]);
         
         try {
             const url = `http://127.0.0.1:8000/api/satellite-passes?group=${group}&name=${encodeURIComponent(satName)}&lat=${observerPos.lat}&lon=${observerPos.lng}&days=1`;
             const response = await fetch(url);
             const data = await response.json();
-            setPasses(data);
+            
+            if (data.passes) {
+                setPasses(data.passes);
+            } else if (Array.isArray(data)) {
+                setPasses(data);
+            }
+
+            if (data.trajectory) {
+                setPredictedPath(data.trajectory);
+            }
         } catch (error) {
             console.error(error);
         } finally {
             setLoadingPasses(false);
         }
+    };
+
+    const closeModal = () => {
+        setIsModalOpen(false);
+        setPredictedPath([]);
     };
 
     const setAlert = (satName: string, passTimeISO: string) => {
@@ -198,10 +265,14 @@ function App() {
             }
 
             notificationTimers.current[satName] = setTimeout(() => {
-                toast(`Obiekt ${satName} pojawi się na horyzoncie za 5 minut!`, {
-                    icon: '🛰️',
-                    duration: 8000,
-                });
+                if ("Notification" in window && Notification.permission === "granted") {
+                    new Notification("🛰️ Przelot Satelity", {
+                        body: `Obiekt ${satName} pojawi się na horyzoncie za 5 minut!`,
+                        icon: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png'
+                    });
+                } else {
+                    toast(`Obiekt ${satName} pojawi się na horyzoncie za 5 minut!`, { icon: '🛰️', duration: 8000 });
+                }
                 delete notificationTimers.current[satName];
             }, notifyTime);
             
@@ -215,9 +286,11 @@ function App() {
         }
     };
 
-    const filteredSatellites = satellites.filter(sat => 
-        sat.satellite_name.toLowerCase().includes(searchQuery.toLowerCase())
-    ).slice(0, 50);
+    const filteredSatellites = satellites.filter(sat => {
+        const matchesSearch = sat.satellite_name.toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesFavoriteFilter = showOnlyFavorites ? favorites.includes(sat.norad_id) : true;
+        return matchesSearch && matchesFavoriteFilter;
+    }).slice(0, 50);
 
     const focusOnSatellite = (lat: number, lon: number) => {
         setTargetCenter([lat, lon]);
@@ -240,16 +313,37 @@ function App() {
                         <option value="weather">Satelity pogodowe</option>
                     </select>
 
-                    <label className="checkbox-label">
-                        <input 
-                            type="checkbox" 
-                            checked={showFootprint} 
-                            onChange={(e) => setShowFootprint(e.target.checked)} 
-                        />
-                        Pokaż zasięg widoczności
-                    </label>
+                    <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+                        <label className="checkbox-label" style={{ marginBottom: 0 }}>
+                            <input 
+                                type="checkbox" 
+                                checked={showFootprint} 
+                                onChange={(e) => setShowFootprint(e.target.checked)} 
+                            />
+                            Zasięg widoczności
+                        </label>
+                        
+                        <button 
+                            onClick={() => setShowOnlyFavorites(!showOnlyFavorites)}
+                            style={{ 
+                                background: showOnlyFavorites ? '#ffc107' : '#e9ecef', 
+                                border: '1px solid #ccc', 
+                                borderRadius: '4px', 
+                                padding: '2px 8px', 
+                                cursor: 'pointer',
+                                fontSize: '0.85rem',
+                                fontWeight: 'bold'
+                            }}
+                        >
+                            ⭐ Tylko ulubione
+                        </button>
+                    </div>
+
                     <div className="observer-hint">
-                        Kliknij na mapę, aby zmienić miejsce obserwacji.
+                        <button onClick={locateUser} style={{ marginBottom: '8px', width: '100%', padding: '8px', cursor: 'pointer' }}>
+                            📍 Zlokalizuj mnie automatycznie
+                        </button>
+                        Lokalizację możesz też zmienić klikając na mapę.
                     </div>
 
                     <input 
@@ -261,16 +355,30 @@ function App() {
                     />
                 </div>
                 <div className="sidebar-list">
-                    {filteredSatellites.map(sat => (
-                        <div 
-                            key={sat.norad_id} 
-                            className="sidebar-item"
-                            onClick={() => focusOnSatellite(sat.lat, sat.lon)}
-                        >
-                            <span className="sat-name">{sat.satellite_name}</span>
-                            <span className="sat-alt">{(sat.elevation / 1000).toFixed(0)} km</span>
-                        </div>
-                    ))}
+                    {filteredSatellites.map(sat => {
+                        const isFav = favorites.includes(sat.norad_id);
+                        return (
+                            <div 
+                                key={sat.norad_id} 
+                                className="sidebar-item"
+                                onClick={() => focusOnSatellite(sat.lat, sat.lon)}
+                            >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                                    <span 
+                                        onClick={(e) => toggleFavorite(sat.norad_id, e)} 
+                                        style={{ cursor: 'pointer', fontSize: '1.1rem' }}
+                                        title={isFav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}
+                                    >
+                                        {isFav ? '⭐' : '☆'}
+                                    </span>
+                                    <span className="sat-name" style={{ whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                                        {sat.satellite_name}
+                                    </span>
+                                </div>
+                                <span className="sat-alt">{(sat.elevation / 1000).toFixed(0)} km</span>
+                            </div>
+                        );
+                    })}
                     {filteredSatellites.length === 0 && (
                         <div className="no-results">Brak wyników</div>
                     )}
@@ -281,7 +389,7 @@ function App() {
                 <div className="modal">
                     <div className="modal-content">
                         <h3>Przeloty: {selectedSatName}</h3>
-                        <button className="close-btn" onClick={() => setIsModalOpen(false)}>X</button>
+                        <button className="close-btn" onClick={closeModal}>X</button>
                         {loadingPasses ? (
                             <p>Obliczanie trajektorii...</p>
                         ) : (
@@ -299,7 +407,7 @@ function App() {
                                                 onClick={() => setAlert(selectedSatName, p.time)}
                                                 style={{ marginLeft: '10px', padding: '4px 8px', cursor: 'pointer' }}
                                             >
-                                                Ustaw alarm
+                                                ⏰ Ustaw alarm
                                             </button>
                                         )}
                                     </li>
@@ -319,6 +427,15 @@ function App() {
                     
                     <LocationMarker position={observerPos} setPosition={setObserverPos} />
                     <MapUpdater center={targetCenter} />
+
+                    {predictedPath.length > 0 && (
+                        <Polyline 
+                            positions={predictedPath} 
+                            color="yellow" 
+                            weight={4} 
+                            dashArray="10, 10" 
+                        />
+                    )}
 
                     {satellites.map((sat) => {
                         const R = 6371000;
@@ -341,7 +458,10 @@ function App() {
                                 >
                                     <Popup>
                                         <b>{sat.satellite_name}</b><br />
-                                        Wysokość: {(sat.elevation / 1000).toFixed(1)} km<br /><br />
+                                        Wysokość: {(sat.elevation / 1000).toFixed(1)} km<br />
+                                        Prędkość: {sat.velocity} km/s ({(sat.velocity * 3600).toFixed(0)} km/h)<br />
+                                        Inklinacja: {sat.inclination}°<br />
+                                        Szer/Dług: {sat.lat.toFixed(2)}°, {sat.lon.toFixed(2)}°<br /><br />
                                         <button onClick={() => checkPasses(sat.satellite_name)}>
                                         Sprawdź widoczność
                                         </button>
