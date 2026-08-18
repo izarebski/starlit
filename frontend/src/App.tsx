@@ -1,8 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import './App.css';
+
+import issImg from './assets/iss.png';
+import starlinkImg from './assets/starlink.png';
+import gpsImg from './assets/gps.png';
+import weatherImg from './assets/weather.png';
 
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -10,6 +15,51 @@ L.Icon.Default.mergeOptions({
     iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
     shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png'
 });
+
+const stationIcon = new L.Icon({
+    iconUrl: issImg,
+    iconSize: [40, 40],
+    iconAnchor: [20, 20],
+    popupAnchor: [0, -20]
+});
+
+const satIcon = new L.Icon({
+    iconUrl: starlinkImg,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+    popupAnchor: [0, -15]
+});
+
+const gpsIcon = new L.Icon({
+    iconUrl: gpsImg,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+    popupAnchor: [0, -15]
+});
+
+const weatherIcon = new L.Icon({
+    iconUrl: weatherImg,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+    popupAnchor: [0, -15]
+});
+
+const defaultIcon = new L.Icon({
+    iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+    popupAnchor: [1, -34],
+    shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+    shadowSize: [41, 41]
+});
+
+const getCustomIcon = (groupName: string) => {
+    if (groupName === 'stations') return stationIcon;
+    if (groupName === 'starlink') return satIcon;
+    if (groupName === 'gps-ops') return gpsIcon;
+    if (groupName === 'weather') return weatherIcon;
+    return defaultIcon;
+};
 
 interface Satellite {
     satellite_name: string;
@@ -51,6 +101,7 @@ function App() {
     const [selectedSatName, setSelectedSatName] = useState("");
     
     const [observerPos, setObserverPos] = useState<L.LatLng>(new L.LatLng(53.885, 17.722));
+    const [showFootprint, setShowFootprint] = useState(false);
 
     useEffect(() => {
         const fetchSatellites = async () => {
@@ -122,6 +173,19 @@ function App() {
                     <option value="gps-ops">Nawigacja GPS</option>
                     <option value="weather">Satelity pogodowe</option>
                 </select>
+                
+                <div style={{ marginTop: '15px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                        <input 
+                            type="checkbox" 
+                            checked={showFootprint} 
+                            onChange={(e) => setShowFootprint(e.target.checked)} 
+                            style={{ marginRight: '8px' }}
+                        />
+                        Pokaż zasięg widoczności
+                    </label>
+                </div>
+
                 <div style={{ marginTop: '10px', fontSize: '0.85em', color: '#555' }}>
                     Kliknij na mapę, aby zmienić miejsce obserwacji.
                 </div>
@@ -156,28 +220,45 @@ function App() {
                 
                 <LocationMarker position={observerPos} setPosition={setObserverPos} />
 
-                {satellites.map((sat) => (
-                    <React.Fragment key={sat.norad_id}>
-                        <Marker position={[sat.lat, sat.lon]}>
-                            <Popup>
-                                <b>{sat.satellite_name}</b><br />
-                                Wysokość: {(sat.elevation / 1000).toFixed(1)} km<br /><br />
-                                <button onClick={() => checkPasses(sat.satellite_name)}>
+                {satellites.map((sat) => {
+                    const R = 6371000;
+                    const theta = Math.acos(R / (R + sat.elevation));
+                    const footprintRadius = R * theta;
+
+                    return (
+                        <React.Fragment key={sat.norad_id}>
+                            {showFootprint && (
+                                <Circle 
+                                    center={[sat.lat, sat.lon]} 
+                                    radius={footprintRadius} 
+                                    pathOptions={{ color: '#4a90e2', fillColor: '#4a90e2', fillOpacity: 0.1, weight: 1 }} 
+                                />
+                            )}
+
+                            <Marker 
+                                position={[sat.lat, sat.lon]} 
+                                icon={getCustomIcon(group)}
+                            >
+                                <Popup>
+                                    <b>{sat.satellite_name}</b><br />
+                                    Wysokość: {(sat.elevation / 1000).toFixed(1)} km<br /><br />
+                                    <button onClick={() => checkPasses(sat.satellite_name)}>
                                     Sprawdź widoczność
-                                </button>
-                            </Popup>
-                        </Marker>
-                        
-                        {trails[sat.norad_id] && trails[sat.norad_id].length > 1 && (
-                            <Polyline 
-                                positions={trails[sat.norad_id]} 
-                                color="red" 
-                                weight={3} 
-                                opacity={0.6} 
-                            />
-                        )}
-                    </React.Fragment>
-                ))}
+                                    </button>
+                                </Popup>
+                            </Marker>
+                            
+                            {trails[sat.norad_id] && trails[sat.norad_id].length > 1 && (
+                                <Polyline 
+                                    positions={trails[sat.norad_id]} 
+                                    color="red" 
+                                    weight={3} 
+                                    opacity={0.6} 
+                                />
+                            )}
+                        </React.Fragment>
+                    );
+                })}
             </MapContainer>
         </div>
     );
