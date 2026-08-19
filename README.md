@@ -71,6 +71,6 @@ Run the application:
 ```
 
 ## 👤 Author
-GitHub: @izarebski
+GitHub: https://github.com/izarebski
 
 LinkedIn: https://www.linkedin.com/in/igor-zar%C4%99bski-4623213aa/
