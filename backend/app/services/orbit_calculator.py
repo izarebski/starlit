@@ -1,3 +1,5 @@
+import math
+
 from skyfield.api import load, wgs84
 from app.services.tle_manager import get_tle_data, load
 
@@ -53,13 +55,17 @@ def group_coords(group_name: str):
     for satellite in satellites:
         geocentric = satellite.at(ts_now)
         subpoint = wgs84.subpoint(geocentric)
+        velocity_vector = geocentric.velocity.km_per_s
+        speed = math.sqrt(sum(v ** 2 for v in velocity_vector))
         
         results.append({
             "satellite_name": satellite.name.strip(),
             "norad_id": satellite.model.satnum,
             "lat": subpoint.latitude.degrees,
             "lon": subpoint.longitude.degrees,
-            "elevation": subpoint.elevation.m
+            "elevation": subpoint.elevation.m,
+            "inclination": round(math.degrees(satellite.model.inclo), 2),
+            "velocity": round(speed, 2)
         })
         
     return results
