@@ -3,6 +3,8 @@
 > An interactive web application for tracking Earth-orbiting satellites in real-time.
 
 <img width="1919" height="945" alt="image" src="https://github.com/user-attachments/assets/f90c24d4-de62-4728-9266-36d91b61f9da" />
+<img width="1919" height="944" alt="image" src="https://github.com/user-attachments/assets/74dfa88d-8623-4ca0-95bb-a793f8c1a474" />
+
 
 
 ## 🌟 About the Project
