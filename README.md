@@ -20,7 +20,7 @@ The application features a stateless backend architecture built with FastAPI. It
 - **Motion Vectors:** Displaying the current direction and flight trajectory of the objects.
 - **Dynamic Basemaps (Dark/Light Mode):** Seamless switching between light (OpenStreetMap) and dark (CARTO Dark Matter) map styles, adjusting the entire UI accordingly.
 - **Search and Filtering:** Quick access to specific space stations and satellites via the side panel, including a "Favorites" feature.
-- **Geolocation:** Automatically centering the map on the user's current position.
+- **Geolocation:** Automatically centering the map on the user's current location.
 
 ## 🛠️ Tech Stack
 
@@ -69,7 +69,7 @@ Open a new terminal tab, navigate to the frontend directory, install packages, a
 Run the application:
 
 ```
- npm run start
+ npm run dev
 ```
 
 ## 👤 Author
